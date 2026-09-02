@@ -120,7 +120,7 @@ The whole suite depends on this change; it is what `test/helpers.ts`
 
 ## Verification
 
-`MemoryStore`, `MemoryBroker` and `MemoryRateLimiter` are covered by all 57
+`MemoryStore`, `MemoryBroker` and `MemoryRateLimiter` are covered by all 64
 tests. `SqlMongoStore`, `RedisBroker` and `RedisRateLimiter` typecheck and are
 written against the documented contract, but have not run against live MySQL,
 Mongo or Redis.

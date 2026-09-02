@@ -137,7 +137,13 @@ function scheduleReconnect() {
 
 function onIncomingMessage(msg) {
   const conversation = state.conversations.find((c) => c.id === msg.conversationId);
-  if (conversation) conversation.messageCount += 1;
+  if (conversation) {
+    conversation.messageCount += 1;
+    conversation.lastMessage = msg;
+    // The server returns the inbox most-recently-active first; keep that true as
+    // messages arrive, or the order silently drifts until the next reload.
+    state.conversations = [conversation, ...state.conversations.filter((c) => c !== conversation)];
+  }
 
   if (msg.conversationId === state.activeConversation) {
     appendMessage(msg);

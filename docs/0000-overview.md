@@ -25,13 +25,14 @@ fixes with features. The grouping below is the useful way to read it.
 | [0012](0012-websocket-reconnect.md) | A dropped socket silently ended all live updates | Bug |
 | [0013](0013-unbounded-history.md) | `GET /api/messages` returned the whole conversation | Bug |
 | [0014](0014-cross-store-consistency.md) | A failed Mongo write left a permanently empty message | Bug |
+| [0015](0015-manual-verification.md) | What I checked by hand in a browser, and what it found | Record |
 
 ## The short version
 
 **Bugs.** The one that bites first under load is [0002](0002-blocking-signature.md):
-every send ran a 200 000-iteration PBKDF2 *synchronously*, so a single message
-stalled the entire process for ~100 ms — every other request, every WebSocket
-frame, all of it. The signature it computed was never read by anything.
+every send ran a 200 000-iteration PBKDF2 *synchronously* — measured at 19 ms per
+message, during which the process serves nobody: no other request, no WebSocket
+frame, not even the health check. The signature it computed was never read by anything.
 Alongside that, the inbox ran `2N+1` queries against tables with no supporting
 index ([0003](0003-n-plus-one-and-indexes.md)), and async route handlers had no
 error path at all, so any database blip left the caller waiting for a response
@@ -55,7 +56,7 @@ single process.
 **Structure.** One deliberate refactor ([0001](0001-store-abstraction.md)):
 data access moved behind a `Store` interface, and pub/sub and rate limiting
 behind `Broker` and `RateLimiter`. Routes no longer import a connection pool.
-This is what makes the 57-case test suite possible without Docker, and it is
+This is what makes the 64-case test suite possible without Docker, and it is
 what made the N+1 fix a single method rather than surgery on a handler.
 
 ## Running it
@@ -82,13 +83,22 @@ guest without nested virtualisation, so Docker Desktop, WSL2 and a local Docker
 Engine are all unavailable. That is a real limitation of this submission and I
 would rather state it than let it be discovered.
 
-**Verified.** The 57-case suite in `test/` runs the real Express app and the
-real WebSocket hub over loopback HTTP and real sockets, against the in-memory
-`Store` and `Broker`. That covers every route, every validation and
+**Verified — automated.** The 64-case suite in `test/` runs the real Express app
+and the real WebSocket hub over loopback HTTP and real sockets, against the
+in-memory `Store` and `Broker`. That covers every route, every validation and
 authorisation rule, the rate-limiting algorithm and its HTTP surface, search
 semantics, the typing indicator, and the multi-instance property — the last one
-by running two complete app instances over one shared broker, which is the
-shape `--scale api=3` produces.
+by running two complete app instances over one shared broker, which is the shape
+`--scale api=3` produces. `test/web-render.test.ts` renders the real frontend in
+jsdom.
+
+**Verified — by hand.** The `memory` drivers mean the app runs with no external
+services, so I also ran it and drove the real UI in a browser: two users, live
+messages, the unread dot, the typing indicator, rate-limit `429`s, search
+scoping, the XSS payload, and a server kill/restart to watch the client
+reconnect and catch up. That session is logged in
+[0015](0015-manual-verification.md) — it found one bug the test suite could not
+see (the inbox stopped re-sorting live), which is now fixed.
 
 **Not verified against live infrastructure.** The `SqlMongoStore`, `RedisBroker`
 and `RedisRateLimiter` implementations, the new MySQL DDL (indexes, the unique

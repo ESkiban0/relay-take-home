@@ -1,5 +1,85 @@
 # Relay
 
+A small chat / inbox app. This is my worked copy of the take-home — the original
+brief is preserved at the bottom.
+
+**The full write-up is in [`docs/`](docs/), one document per change, explaining
+what was wrong, what the alternatives were, why I chose what I chose, and how it
+is tested. Start with [`docs/0000-overview.md`](docs/0000-overview.md).**
+
+## Running it
+
+```bash
+cp .env.example .env
+docker compose up --build            # http://localhost:3000
+docker compose up -d --scale api=3   # the multi-instance case
+```
+
+Or with no MySQL, Mongo or Redis at all — the store and broker have in-memory
+implementations:
+
+```bash
+npm install
+npm run dev:memory                   # http://localhost:3000, demo data seeded
+npm test                             # 64 tests
+npm run typecheck
+```
+
+Open `http://localhost:3000/?userId=2` in a second window to act as another
+user.
+
+## What I changed
+
+### Bugs found and fixed
+
+| | What was wrong |
+|---|---|
+| [0002](docs/0002-blocking-signature.md) | Every send ran a 200 000-iteration `pbkdf2Sync` — **19 ms of blocked event loop per message**, measured — to compute a signature nothing ever read. |
+| [0003](docs/0003-n-plus-one-and-indexes.md) | The inbox ran `2N+1` sequential queries, against a `messages` table with **no index on `conversation_id`** — so every one was a full table scan. |
+| [0004](docs/0004-async-error-handling.md) | Express 4 does not catch rejected async handlers: any database blip left the request **hanging forever** with no response. |
+| [0009](docs/0009-duplicate-sends.md) | `client_id` was stored but never read, and the client generated a fresh UUID per attempt — retries and double-clicks duplicated messages. |
+| [0010](docs/0010-authorization.md) | **Any socket could subscribe to any conversation**, `GET /api/messages` had no membership check, and `senderId` came from the request body. |
+| [0011](docs/0011-xss-in-sidebar.md) | Conversation titles were rendered with `innerHTML` — stored XSS, executing for every participant. |
+| [0012](docs/0012-websocket-reconnect.md) | A dropped WebSocket was never noticed or reopened: the app silently stopped updating and looked fine. |
+| [0013](docs/0013-unbounded-history.md) | `GET /api/messages` returned the **entire** conversation, and built a Mongo `$in` from every id. |
+| [0014](docs/0014-cross-store-consistency.md) | A failed Mongo write left a MySQL row whose body rendered as `''` forever, silently. |
+
+### Features built — all four from `tasks/`
+
+- **[Search](docs/0005-search.md)** — Mongo text index, scoped to the caller's own conversations in the query itself.
+- **[Rate limiting](docs/0006-rate-limiting.md)** — 5 sends / 10 s per user per conversation, sliding-window log in Redis via an atomic Lua script, `429` + `Retry-After`.
+- **[Multi-instance](docs/0007-multi-instance.md)** — Redis pub/sub fan-out, so real-time survives `--scale api=3`.
+- **[Typing indicator](docs/0008-typing-indicator.md)** — expiry-based rather than start/stop, so a lost "stop" cannot leave it stuck.
+
+### Structure
+
+One refactor ([0001](docs/0001-store-abstraction.md)): data access behind a
+`Store` interface, pub/sub and rate limiting behind `Broker` and `RateLimiter`,
+each with a real and an in-memory implementation. Routes no longer import a
+connection pool. That is what makes the test suite possible and what made the
+N+1 fix a single method.
+
+## Honest status
+
+I had no Docker on the machine I worked on (a Hyper-V guest with no nested
+virtualisation), so **the MySQL DDL, the Mongo text index, the Redis Lua script
+and the Envoy scale-out have not been executed.** They are written to the
+contract the in-memory implementations are tested against, but they are unrun.
+
+What *is* verified: 64 automated tests against the real Express app and real
+WebSockets, plus a hands-on browser session covering two users, live messages,
+the unread dot, the typing indicator, `429`s, search scoping, the XSS payload
+and a server kill/restart to watch the client reconnect and catch up — logged in
+[0015](docs/0015-manual-verification.md). That session found a bug the suite
+could not see.
+
+Each document's "Verification" section says exactly which side of that line it
+falls on.
+
+---
+
+## Original brief
+
 Hey — thanks for taking a look at this. Quick bit of context, honestly:
 
 > I've been putting together this little chat / inbox app in my spare time. I rushed it, and I'm
@@ -20,16 +100,7 @@ So, a few things, if you don't mind:
    something, improve what bugs you most, or drop a note in [`docs/`](docs/) on what you'd change and
    why. I won't be offended — I'd rather see how you think about it.
 
-## Running it
-
-```
-cp .env.example .env
-docker compose up --build
-```
-
-Then open <http://localhost:3000>. It seeds a couple of demo users and conversations on first boot.
-
-## Ground rules
+### Ground rules
 
 - **Work in your own copy.** Clone this repo, push it to a fresh repo of your own, and send us the
   link when you're done. Public is fine.
