@@ -117,7 +117,7 @@ await new Promise((r) => setTimeout(r, Number(process.env.RATE_LIMIT_WINDOW_MS ?
 
 const codes: number[] = [];
 for (let i = 0; i < LIMIT * 2; i++) {
-  const res = await post(2, { conversationId: CONVERSATION_ID, body: `limit probe ` });
+  const res = await post(2, { conversationId: CONVERSATION_ID, body: `limit probe ${i}` });
   codes.push(res.status);
 }
 const accepted = codes.filter((c) => c === 201).length;
@@ -127,9 +127,10 @@ check(
   'rate limit budget is shared across instances',
   forbidden === 0 && accepted === LIMIT,
   forbidden
-    ? `sender is not a participant (x403) — inconclusive, pick a conversation they belong to`
-    : ` of  accepted; limit is , ` +
-      `a per-process counter across 3 instances would allow up to -e`,
+    ? `sender is not a participant (${forbidden}x403) — inconclusive, ` +
+      `pick a conversation they belong to`
+    : `${accepted} of ${codes.length} accepted; limit is ${LIMIT}, ` +
+      `a per-process counter across 3 instances would allow up to ${LIMIT * 3}`,
 );
 
 bob.close();
