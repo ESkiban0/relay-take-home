@@ -68,8 +68,8 @@ export class RedisBroker implements Broker {
 
   static create(config: Config): RedisBroker {
     return new RedisBroker(
-      redisClient(config, 'broker:pub'),
-      redisClient(config, 'broker:sub'),
+      redisClient(config, 'broker:pub', 'command'),
+      redisClient(config, 'broker:sub', 'subscriber'),
       config.instanceId,
     );
   }
@@ -84,9 +84,18 @@ export class RedisBroker implements Broker {
     if (this.#started) return;
     this.#started = true;
 
-    this.sub.subscribe(CHANNEL).catch((err) => {
-      console.error('[broker] subscribe failed', err);
-    });
+    // Subscribing on every `ready`, not once at boot. ioredis restores known
+    // subscriptions after a reconnect, but only ones that previously succeeded —
+    // so a single failure at startup used to leave the instance permanently
+    // deaf, with nothing but one log line to show for it. SUBSCRIBE is
+    // idempotent, so re-issuing it is free.
+    const subscribe = () => {
+      this.sub.subscribe(CHANNEL).catch((err) => {
+        console.error(`[broker] subscribe failed: ${(err as Error).message}`);
+      });
+    };
+    this.sub.on('ready', subscribe);
+    if (this.sub.status === 'ready') subscribe();
     this.sub.on('message', (channel, raw) => {
       if (channel !== CHANNEL) return;
       let event: BrokerEvent;

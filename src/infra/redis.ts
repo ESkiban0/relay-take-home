@@ -2,35 +2,48 @@ import Redis from 'ioredis';
 import type { Config } from '../config.ts';
 
 /**
- * One place that builds Redis connections, because the defaults are wrong for
- * this app in two ways that only show up during an outage.
+ * Redis connections, with deliberately different settings for the two roles.
  *
- * **Commands must not queue forever.** ioredis defaults to
- * `enableOfflineQueue: true`, so while Redis is unreachable every command is
- * buffered and the caller's promise simply never settles. Measured against a
- * stopped Redis, `POST /api/messages` hung indefinitely — the request never
- * returned at all, and connections piled up behind it. A bounded
- * `commandTimeout` turns that into a fast, visible failure.
+ * **Command connections** (publisher, rate limiter) must fail fast. ioredis
+ * defaults to `enableOfflineQueue: true`, so while Redis is unreachable every
+ * command is buffered and the caller's promise never settles — measured against
+ * a stopped Redis, `POST /api/messages` hung indefinitely and connections piled
+ * up behind it. A bounded `commandTimeout` with the offline queue off turns
+ * that into a fast, visible 500.
  *
- * **An unhandled `error` event is a crash risk.** Without a listener, ioredis
- * logs `Unhandled error event` on every reconnect attempt, which during a real
- * outage is a tight loop of noise, and on an EventEmitter is one refactor away
- * from taking the process down.
+ * **The subscriber must not.** Its one command is a `SUBSCRIBE` issued at boot,
+ * usually *before* the socket is ready — with the offline queue disabled that
+ * is rejected outright with "Stream isn't writeable", and the instance then
+ * never receives anything at all. Applying the fail-fast options to both roles
+ * silently killed all cross-instance real-time; the unit tests could not see it
+ * because they run against `MemoryBroker`. So the subscriber keeps the queue
+ * and has no command timeout: it is long-lived and has nobody waiting on it.
  *
- * The connection itself still retries forever — that is what makes recovery
- * after a restart automatic, which is verified in docs/0017.
+ * Both keep retrying the connection forever, which is what makes recovery after
+ * a Redis restart automatic.
  */
-export function redisClient(config: Config, label: string): Redis {
-  const client = new Redis(config.redisUrl, {
-    commandTimeout: config.redisCommandTimeoutMs,
-    // Fail a command rather than parking it until Redis returns.
-    enableOfflineQueue: false,
-    maxRetriesPerRequest: 1,
-  });
+export type RedisRole = 'command' | 'subscriber';
+
+export function redisClient(config: Config, label: string, role: RedisRole): Redis {
+  const client = new Redis(
+    config.redisUrl,
+    role === 'command'
+      ? {
+          commandTimeout: config.redisCommandTimeoutMs,
+          enableOfflineQueue: false,
+          maxRetriesPerRequest: 1,
+        }
+      : {
+          // Queue the boot-time SUBSCRIBE until the connection is up.
+          enableOfflineQueue: true,
+          maxRetriesPerRequest: null,
+        },
+  );
 
   client.on('error', (err) => {
-    // Logged, not thrown: the caller sees the failed command, and the
-    // connection keeps retrying underneath.
+    // Logged, not thrown: without a listener ioredis reports "Unhandled error
+    // event" on every reconnect attempt, which during an outage is a tight loop
+    // of noise and, on an EventEmitter, a crash waiting to happen.
     console.error(`[redis:${label}] ${(err as Error).message}`);
   });
 

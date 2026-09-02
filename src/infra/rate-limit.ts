@@ -70,7 +70,7 @@ export class RedisRateLimiter implements RateLimiter {
   }
 
   static create(config: Config): RedisRateLimiter {
-    return new RedisRateLimiter(redisClient(config, 'ratelimit'), config.rateLimit);
+    return new RedisRateLimiter(redisClient(config, 'ratelimit', 'command'), config.rateLimit);
   }
 
   async consume(key: string): Promise<RateLimitDecision> {
