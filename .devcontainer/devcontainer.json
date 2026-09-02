@@ -5,7 +5,10 @@
     // moby:false selects upstream Docker CE. The default (moby) packages are
     // not published for Debian trixie, which the node:22 image is now based on,
     // and the feature install fails outright.
-    "ghcr.io/devcontainers/features/docker-in-docker:2": { "moby": false }
+    "ghcr.io/devcontainers/features/docker-in-docker:2": { "moby": false },
+    // This image ships no SSH server, so `gh codespace ssh` cannot attach —
+    // which is how the stack gets driven from outside the browser.
+    "ghcr.io/devcontainers/features/sshd:1": {}
   },
   "postCreateCommand": "cp -n .env.example .env && npm install",
   "forwardPorts": [3000],
