@@ -9,8 +9,9 @@
  *
  * See docs/0006-rate-limiting.md.
  */
-import Redis from 'ioredis';
+import type Redis from 'ioredis';
 import type { Config } from '../config.ts';
+import { redisClient } from './redis.ts';
 
 export interface RateLimitDecision {
   allowed: boolean;
@@ -69,7 +70,7 @@ export class RedisRateLimiter implements RateLimiter {
   }
 
   static create(config: Config): RedisRateLimiter {
-    return new RedisRateLimiter(new Redis(config.redisUrl), config.rateLimit);
+    return new RedisRateLimiter(redisClient(config, 'ratelimit'), config.rateLimit);
   }
 
   async consume(key: string): Promise<RateLimitDecision> {

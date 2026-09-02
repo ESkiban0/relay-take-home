@@ -70,5 +70,23 @@ export interface Store {
   listMessages(conversationId: number, opts: ListMessagesOptions): Promise<Message[]>;
   createMessage(input: NewMessage): Promise<CreateMessageResult>;
   searchMessages(userId: number, query: string, limit: number): Promise<SearchHit[]>;
+  /**
+   * Throws if the backing stores are not answering. Backs /healthz, which
+   * previously reported ok while MySQL was down and every request 500d — so an
+   * orchestrator would have kept the instance in rotation.
+   */
+  ping(): Promise<void>;
   close(): Promise<void>;
+}
+
+/**
+ * Raised when `createConversation` is given participant ids that do not exist.
+ * A store-level condition rather than an HTTP one, so the memory and SQL
+ * implementations can agree on it and the route can map it to a 400.
+ */
+export class UnknownParticipantsError extends Error {
+  constructor(readonly participantIds: number[]) {
+    super(`unknown participantIds: ${participantIds.join(', ')}`);
+    this.name = 'UnknownParticipantsError';
+  }
 }

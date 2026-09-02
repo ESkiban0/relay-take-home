@@ -19,6 +19,9 @@ const state = {
   reconnectTimer: null,
   typingSentAt: 0,
   sending: false,
+  // Monotonic stamp identifying the current conversation load; see openConversation.
+  loadToken: 0,
+  loadingOlder: false,
 };
 
 const el = (id) => document.getElementById(id);
@@ -157,6 +160,11 @@ function onIncomingMessage(msg) {
 
 async function openConversation(id, title) {
   state.activeConversation = id;
+  // Every load is stamped. A response whose stamp is no longer current belongs
+  // to a conversation the user has already navigated away from, and rendering
+  // it would paint one room's messages into another's pane.
+  const load = ++state.loadToken;
+
   const conversation = state.conversations.find((c) => c.id === id);
   if (conversation) conversation.unread = false;
   renderSidebar();
@@ -166,6 +174,8 @@ async function openConversation(id, title) {
   pane.replaceChildren();
 
   const { messages, nextBefore } = await api(`/api/messages?conversationId=${id}`);
+  if (load !== state.loadToken) return;
+
   state.nextBefore = nextBefore;
   renderOlderControl();
   for (const m of messages) appendMessage(m);
@@ -173,17 +183,32 @@ async function openConversation(id, title) {
 }
 
 async function loadOlder() {
-  if (!state.activeConversation || state.nextBefore === null) return;
-  const { messages, nextBefore } = await api(
-    `/api/messages?conversationId=${state.activeConversation}&before=${state.nextBefore}`,
-  );
-  state.nextBefore = nextBefore;
+  // Without the in-flight guard, a second click reads the same cursor and
+  // fetches — then prepends — the same page again.
+  if (state.loadingOlder || !state.activeConversation || state.nextBefore === null) return;
+  state.loadingOlder = true;
 
-  const pane = el('messages');
-  const previousHeight = pane.scrollHeight;
-  for (const m of [...messages].reverse()) pane.prepend(renderMessage(m));
-  renderOlderControl();
-  pane.scrollTop = pane.scrollHeight - previousHeight;
+  const load = state.loadToken;
+  const conversationId = state.activeConversation;
+  try {
+    const { messages, nextBefore } = await api(
+      `/api/messages?conversationId=${conversationId}&before=${state.nextBefore}`,
+    );
+    if (load !== state.loadToken) return;
+
+    state.nextBefore = nextBefore;
+
+    const pane = el('messages');
+    const previousHeight = pane.scrollHeight;
+    for (const m of [...messages].reverse()) {
+      if (pane.querySelector(`[data-message-id="${m.id}"]`)) continue;
+      pane.prepend(renderMessage(m));
+    }
+    renderOlderControl();
+    pane.scrollTop = pane.scrollHeight - previousHeight;
+  } finally {
+    state.loadingOlder = false;
+  }
 }
 
 function renderOlderControl() {

@@ -1,6 +1,6 @@
 import express from 'express';
 import type { Config } from './config.ts';
-import { errorHandler } from './http/errors.ts';
+import { asyncHandler, errorHandler } from './http/errors.ts';
 import type { Broker } from './infra/broker.ts';
 import type { RateLimiter } from './infra/rate-limit.ts';
 import { conversationsRouter } from './routes/conversations.ts';
@@ -26,9 +26,27 @@ export function createApp({ store, broker, rateLimiter, config }: AppDeps): expr
   app.use(express.json({ limit: '64kb' }));
   app.use(express.static('web'));
 
-  app.get('/healthz', (_req, res) => {
+  // Liveness: the process is running and its event loop is turning.
+  app.get('/livez', (_req, res) => {
     res.json({ ok: true, instanceId: config.instanceId });
   });
+
+  // Readiness: the instance can actually serve. Reporting ok while MySQL is
+  // down — the previous behaviour — keeps a useless instance in the load
+  // balancer's rotation while every real request 500s.
+  app.get(
+    '/healthz',
+    asyncHandler(async (_req, res) => {
+      try {
+        await store.ping();
+      } catch (err) {
+        console.error('[health] store unreachable', err);
+        res.status(503).json({ ok: false, instanceId: config.instanceId, error: 'store unreachable' });
+        return;
+      }
+      res.json({ ok: true, instanceId: config.instanceId });
+    }),
+  );
 
   app.use('/api/conversations', conversationsRouter(store, config));
   app.use('/api/messages', messagesRouter(store, broker, rateLimiter, config));

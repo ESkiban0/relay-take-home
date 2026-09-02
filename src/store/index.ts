@@ -13,7 +13,7 @@ export async function createStore(config: Config): Promise<Store> {
 
   const pool = createPool(config.mysqlUrl);
   await waitForMysql(pool);
-  const { db } = await connectMongo(config.mongoUrl);
+  const { db } = await connectMongo(config.mongoUrl, config.mongoServerSelectionTimeoutMs);
   await ensureMongoIndexes(db);
   return new SqlMongoStore(pool, db);
 }

@@ -5,8 +5,17 @@ export interface MongoHandle {
   db: Db;
 }
 
-export async function connectMongo(url: string, retries = 20, delayMs = 1500): Promise<MongoHandle> {
-  const client = new MongoClient(url);
+export async function connectMongo(
+  url: string,
+  /**
+   * The driver default is 30 seconds, which turns a Mongo outage into a
+   * 30-second hang on every send rather than a fast failure. Measured.
+   */
+  serverSelectionTimeoutMS = 3000,
+  retries = 20,
+  delayMs = 1500,
+): Promise<MongoHandle> {
+  const client = new MongoClient(url, { serverSelectionTimeoutMS });
   let lastErr: unknown;
   for (let i = 0; i < retries; i++) {
     try {

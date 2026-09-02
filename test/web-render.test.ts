@@ -53,7 +53,33 @@ interface Client {
   flush(): Promise<void>;
 }
 
-async function mountClient(routes: Record<string, unknown>): Promise<Client> {
+/**
+ * A fetch stub whose responses can be released by hand, so tests can interleave
+ * two in-flight requests and pin the resulting order of effects.
+ */
+function deferredFetch() {
+  const pending: Array<{ url: string; release: (payload: unknown) => void }> = [];
+  const impl = (input: string) =>
+    new Promise((resolve) => {
+      pending.push({
+        url: String(input),
+        release: (payload) =>
+          resolve({
+            ok: true,
+            status: 200,
+            headers: { get: () => null },
+            json: async () => payload,
+            text: async () => JSON.stringify(payload),
+          }),
+      });
+    });
+  return { impl, pending };
+}
+
+async function mountClient(
+  routes: Record<string, unknown>,
+  fetchImpl?: (input: string) => Promise<unknown>,
+): Promise<Client> {
   const root = path.resolve(import.meta.dirname, '..', 'web');
   const html = await fs.readFile(path.join(root, 'index.html'), 'utf8');
   const script = await fs.readFile(path.join(root, 'app.js'), 'utf8');
@@ -68,7 +94,7 @@ async function mountClient(routes: Record<string, unknown>): Promise<Client> {
   });
   const window = dom.window as any;
 
-  window.fetch = async (input: string) => {
+  const defaultFetch = async (input: string) => {
     const url = String(input).split('?')[0];
     const payload = routes[url] ?? routes[String(input)] ?? [];
     return {
@@ -78,6 +104,14 @@ async function mountClient(routes: Record<string, unknown>): Promise<Client> {
       json: async () => payload,
       text: async () => JSON.stringify(payload),
     };
+  };
+  // The inbox load always resolves normally; only later calls are deferred, so
+  // a test does not have to hand-release the app's own bootstrap.
+  let bootstrapped = false;
+  window.fetch = (input: string) => {
+    if (fetchImpl && bootstrapped) return fetchImpl(input);
+    if (String(input).startsWith('/api/conversations')) bootstrapped = true;
+    return defaultFetch(input);
   };
   window.WebSocket = FakeWebSocket;
   window.crypto ??= {};
@@ -209,6 +243,84 @@ describe('web client rendering', () => {
       const banner = client.document.getElementById('typing')!;
       assert.equal(banner.hidden, true);
       assert.equal(banner.textContent, '');
+    });
+  });
+
+  /**
+   * Both of these are races in the client's request handling, found by reading
+   * it rather than by using it — they need two requests in flight at once,
+   * which is easy for a user to cause and impossible to notice in a stub that
+   * resolves instantly.
+   */
+  describe('concurrent request handling', () => {
+    const page = (ids: number[], nextBefore: number | null) => ({
+      messages: ids.map((id) => ({ id, conversationId: 1, senderId: 1, body: `m${id}` })),
+      nextBefore,
+    });
+
+    it('does not duplicate messages when "load older" is clicked twice', async () => {
+      const { impl, pending } = deferredFetch();
+      client = await mountClient(
+        { '/api/conversations': [{ id: 1, title: 'Room', messageCount: 0, lastMessage: null }] },
+        impl,
+      );
+
+      (client.document.querySelector('#conversations li') as HTMLElement).click();
+      await client.flush();
+      pending.shift()!.release(page([11, 12], 11)); // opening the conversation
+      await client.flush();
+
+      const older = client.document.getElementById('older') as HTMLElement;
+      older.click();
+      older.click(); // impatient second click, first request still in flight
+      await client.flush();
+
+      // Both requests carried the same cursor, so the server returns the same
+      // page twice.
+      for (const req of pending.splice(0)) req.release(page([9, 10], 9));
+      await client.flush();
+
+      const ids = [...client.document.querySelectorAll('#messages .msg')].map(
+        (el) => (el as HTMLElement).dataset.messageId,
+      );
+      assert.deepEqual(
+        ids.length,
+        new Set(ids).size,
+        `the same page was rendered twice: ${ids.join(',')}`,
+      );
+    });
+
+    it('does not render a slow conversation into the pane of the one now open', async () => {
+      const { impl, pending } = deferredFetch();
+      client = await mountClient(
+        {
+          '/api/conversations': [
+            { id: 1, title: 'Slow room', messageCount: 0, lastMessage: null },
+            { id: 2, title: 'Fast room', messageCount: 0, lastMessage: null },
+          ],
+        },
+        impl,
+      );
+
+      const items = client.document.querySelectorAll('#conversations li');
+      (items[0] as HTMLElement).click(); // conversation 1 — will be slow
+      await client.flush();
+      (items[1] as HTMLElement).click(); // user gives up, opens conversation 2
+      await client.flush();
+
+      const [slow, fast] = pending;
+      fast.release(page([21, 22], null)); // the room the user is looking at
+      await client.flush();
+      slow.release(page([31, 32], null)); // the abandoned one arrives late
+      await client.flush();
+
+      const bodies = [...client.document.querySelectorAll('#messages .msg')].map(
+        (el) => el.textContent ?? '',
+      );
+      assert.ok(
+        bodies.every((b) => b.includes('m21') || b.includes('m22')),
+        `the abandoned conversation leaked into the open one: ${bodies.join(' | ')}`,
+      );
     });
   });
 

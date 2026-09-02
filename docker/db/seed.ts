@@ -1,7 +1,7 @@
 import { config } from '../../src/config.ts';
 import { connectMongo, ensureMongoIndexes } from '../../src/db/mongo.ts';
 
-const { client, db } = await connectMongo(config.mongoUrl);
+const { client, db } = await connectMongo(config.mongoUrl, config.mongoServerSelectionTimeoutMs);
 
 // The text index backs GET /api/search. Creating it here as well as on API boot
 // means a fresh volume is searchable before the first request arrives.

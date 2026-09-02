@@ -6,8 +6,9 @@
  * has to reach subscribers parked on instances B and C — that hop is this
  * interface. See docs/0007-multi-instance.md.
  */
-import Redis from 'ioredis';
+import type Redis from 'ioredis';
 import type { Config } from '../config.ts';
+import { redisClient } from './redis.ts';
 
 export interface BrokerEvent {
   conversationId: number;
@@ -66,7 +67,11 @@ export class RedisBroker implements Broker {
   ) {}
 
   static create(config: Config): RedisBroker {
-    return new RedisBroker(new Redis(config.redisUrl), new Redis(config.redisUrl), config.instanceId);
+    return new RedisBroker(
+      redisClient(config, 'broker:pub'),
+      redisClient(config, 'broker:sub'),
+      config.instanceId,
+    );
   }
 
   async publish(event: Omit<BrokerEvent, 'origin'>): Promise<void> {

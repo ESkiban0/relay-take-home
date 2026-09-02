@@ -17,6 +17,7 @@ import type {
   SearchHit,
   Store,
 } from './types.ts';
+import { UnknownParticipantsError } from './types.ts';
 
 interface BodyDoc {
   _id: number;
@@ -89,6 +90,20 @@ export class SqlMongoStore implements Store {
 
   async createConversation(title: string, participantIds: number[]): Promise<Conversation> {
     const unique = [...new Set(participantIds)];
+
+    // A participant id with no matching user violates the foreign key, which
+    // surfaces as a driver error and was being reported to the caller as a 500.
+    // Checking first turns "you named someone who does not exist" into the 400
+    // it always was.
+    const [known] = await this.pool.query<RowDataPacket[]>(
+      'SELECT id FROM users WHERE id IN (?)',
+      [unique],
+    );
+    const missing = unique.filter((id) => !known.some((row) => Number(row.id) === id));
+    if (missing.length) {
+      throw new UnknownParticipantsError(missing);
+    }
+
     const conn = await this.pool.getConnection();
     try {
       // A conversation with only some of its participants inserted is a broken
@@ -218,6 +233,11 @@ export class SqlMongoStore implements Store {
       body: d.body,
       createdAt: d.createdAt,
     }));
+  }
+
+  async ping(): Promise<void> {
+    await this.pool.query("SELECT 1");
+    await this.db.command({ ping: 1 });
   }
 
   async close(): Promise<void> {

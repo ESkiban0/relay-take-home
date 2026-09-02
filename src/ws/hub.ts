@@ -10,6 +10,8 @@ interface Client {
   /** Conversations this socket has been *authorised* to receive, never the raw request. */
   subs: Set<number>;
   alive: boolean;
+  /** Per-conversation timestamp of the last accepted typing frame. */
+  lastTypingAt: Map<number, number>;
 }
 
 const HEARTBEAT_MS = 30_000;
@@ -49,7 +51,13 @@ export class Hub {
         return;
       }
 
-      const client: Client = { socket, userId, subs: new Set(), alive: true };
+      const client: Client = {
+        socket,
+        userId,
+        subs: new Set(),
+        alive: true,
+        lastTypingAt: new Map(),
+      };
       this.#clients.add(client);
 
       socket.on('pong', () => {
@@ -115,6 +123,17 @@ export class Hub {
     if (frame.type === 'typing') {
       const conversationId = Number(frame.conversationId);
       if (!Number.isInteger(conversationId) || !client.subs.has(conversationId)) return;
+
+      // The browser throttles to one frame per 1.5s, but nothing stops a client
+      // that does not. Measured before this guard: 2000 frames sent, 2000 fanned
+      // out to every subscriber — one socket amplified across the whole room,
+      // through Redis, with no limit. Client-side throttling is a UX nicety; the
+      // server has to enforce it.
+      const now = Date.now();
+      const last = client.lastTypingAt.get(conversationId) ?? 0;
+      if (now - last < this.config.typingMinIntervalMs) return;
+      client.lastTypingAt.set(conversationId, now);
+
       await this.broker.publish({
         conversationId,
         payload: {

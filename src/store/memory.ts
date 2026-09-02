@@ -124,5 +124,7 @@ export class MemoryStore implements Store {
       }));
   }
 
+  async ping(): Promise<void> {}
+
   async close(): Promise<void> {}
 }

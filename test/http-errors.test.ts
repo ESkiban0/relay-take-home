@@ -63,3 +63,35 @@ describe('routing', () => {
     assert.equal(res.status, 400);
   });
 });
+
+describe('health endpoints', () => {
+  class DeadStore extends MemoryStore {
+    override async ping(): Promise<never> {
+      throw new Error('mysql is gone');
+    }
+  }
+
+  it('reports 503 when the store is unreachable', async () => {
+    const harness = await startHarness({ store: new DeadStore() });
+    try {
+      // Previously this returned 200 with ok:true while every real request
+      // 500d, so a load balancer kept the instance in rotation.
+      const res = await api(harness, '/healthz');
+      assert.equal(res.status, 503);
+      assert.equal(res.body.ok, false);
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it('keeps /livez independent of the store', async () => {
+    const harness = await startHarness({ store: new DeadStore() });
+    try {
+      const res = await api(harness, '/livez');
+      assert.equal(res.status, 200);
+      assert.equal(res.body.ok, true);
+    } finally {
+      await harness.close();
+    }
+  });
+});

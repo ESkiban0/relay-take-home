@@ -231,3 +231,59 @@ describe('multiple API instances', () => {
     }
   });
 });
+
+describe('typing throttle', () => {
+  let harness: Harness;
+  let supportId: number;
+  const sockets: TestSocket[] = [];
+
+  beforeEach(async () => {
+    harness = await startHarness({ config: { typingMinIntervalMs: 1000 } });
+    ({ supportId } = await seedFixture(harness.store));
+  });
+  afterEach(async () => {
+    await Promise.all(sockets.splice(0).map((s) => s.close()));
+    await harness.close();
+  });
+
+  it('collapses a flood of typing frames from one socket', async () => {
+    const alice = await connectSocket(harness, 1);
+    const bob = await connectSocket(harness, 2);
+    sockets.push(alice, bob);
+    await subscribe(alice, [supportId]);
+    await subscribe(bob, [supportId]);
+
+    // A client that ignores the browser's 1.5s throttle. Unbounded, each of
+    // these fans out through the broker to every subscriber in the room.
+    for (let i = 0; i < 500; i++) {
+      alice.send({ type: 'typing', conversationId: supportId });
+    }
+    await wait(200);
+
+    const delivered = bob.frames.filter((f) => f.type === 'typing').length;
+    assert.equal(delivered, 1, `500 frames should collapse to 1, got ${delivered}`);
+  });
+
+  it('allows a further signal once the interval has passed', async () => {
+    const short = await startHarness({ config: { typingMinIntervalMs: 50 } });
+    try {
+      const { supportId: id } = await seedFixture(short.store);
+      const alice = await connectSocket(short, 1);
+      const bob = await connectSocket(short, 2);
+      await subscribe(alice, [id]);
+      await subscribe(bob, [id]);
+
+      alice.send({ type: 'typing', conversationId: id });
+      await bob.waitFor((f) => f.type === 'typing');
+      await wait(80);
+      alice.send({ type: 'typing', conversationId: id });
+      await wait(120);
+
+      assert.equal(bob.frames.filter((f) => f.type === 'typing').length, 2);
+      await alice.close();
+      await bob.close();
+    } finally {
+      await short.close();
+    }
+  });
+});

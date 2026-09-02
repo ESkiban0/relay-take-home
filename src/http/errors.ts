@@ -1,4 +1,5 @@
 import type { NextFunction, Request, RequestHandler, Response } from 'express';
+import { UnknownParticipantsError } from '../store/types.ts';
 
 /** An error carrying the HTTP status the client should see. */
 export class HttpError extends Error {
@@ -41,6 +42,13 @@ export function errorHandler(): (
 
     if (err instanceof HttpError) {
       res.set(err.headers).status(err.status).json({ error: err.message });
+      return;
+    }
+
+    // A store-level precondition failure, not a server fault: naming a user who
+    // does not exist used to surface as a foreign-key error and a 500.
+    if (err instanceof UnknownParticipantsError) {
+      res.status(400).json({ error: err.message });
       return;
     }
 

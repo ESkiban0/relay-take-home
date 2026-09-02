@@ -42,6 +42,15 @@ export const config = {
 
   /** How long a `typing` signal stays live before the UI drops it. */
   typingTtlMs: int(process.env.TYPING_TTL_MS, 4000),
+
+  /** Smallest gap between two accepted typing frames from one socket. */
+  typingMinIntervalMs: int(process.env.TYPING_MIN_INTERVAL_MS, 1000),
+
+  /** Bound on any single Redis command, so an outage fails fast. */
+  redisCommandTimeoutMs: int(process.env.REDIS_COMMAND_TIMEOUT_MS, 2000),
+
+  /** Bound on MongoDB server selection; the driver default is 30s. */
+  mongoServerSelectionTimeoutMs: int(process.env.MONGO_SERVER_SELECTION_TIMEOUT_MS, 3000),
 };
 
 export type Config = typeof config;
