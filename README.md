@@ -88,11 +88,26 @@ Two findings from doing this rather than reasoning about it, both written up:
   before the limiter ran — and it reported green. Fixed; the real run gives 5 of
   10 accepted across three instances, where a per-process counter would allow 15.
 
-**Still unverified**, and stated as such in the relevant documents: an induced
-Mongo failure to exercise the compensating delete in
-[0014](docs/0014-cross-store-consistency.md) — the weakest-evidence change here;
-Redis restarting under load; Envoy WebSocket idle-timeout reconnection; and the
-rate limiter under genuinely concurrent load.
+4. **A deliberate bug hunt** ([0017](docs/0017-bug-hunt.md)) against that stack —
+   inducing Mongo and Redis outages, killing instances, flooding sockets,
+   probing signal handling. It closed the remaining gaps and **found fourteen
+   more bugs**, three of them introduced by me.
+
+The one worth singling out: fail-fast Redis options I added while fixing an
+indefinite hang were also applied to the *subscriber* connection, whose
+`SUBSCRIBE` is issued before the socket is ready. It was rejected outright, and
+every instance went permanently deaf — **all cross-instance real-time silently
+dead, with all 70 tests still green**, because they run against `MemoryBroker`
+and never construct a `RedisBroker`. That is the two-implementations risk from
+[0001](docs/0001-store-abstraction.md), demonstrated rather than hypothesised.
+
+Of the twelve issues fixed in that pass, the test suite would have caught none:
+they live in driver defaults, signal handling, process supervision and proxy
+behaviour.
+
+**Still open**, and listed as such: Envoy has no health checks or retry policy,
+so a dying instance produces a brief window of `503`s; and there is no per-user
+cap on WebSocket connections.
 
 ---
 

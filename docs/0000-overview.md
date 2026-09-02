@@ -27,6 +27,7 @@ fixes with features. The grouping below is the useful way to read it.
 | [0014](0014-cross-store-consistency.md) | A failed Mongo write left a permanently empty message | Bug |
 | [0015](0015-manual-verification.md) | What I checked by hand in a browser, and what it found | Record |
 | [0016](0016-live-stack-verification.md) | The live Docker stack: MySQL, Mongo, Redis, `--scale api=3` | Record |
+| [0017](0017-bug-hunt.md) | Second pass: 14 more bugs found on the live stack | Record |
 
 ## The short version
 
@@ -112,8 +113,13 @@ that turned out to be wrong** (which index the optimiser actually picks for
 paged history) and **a check that passed for the wrong reason** until I looked
 at it.
 
-**Still not verified.** An induced Mongo failure to exercise the compensating
-delete in [0014](0014-cross-store-consistency.md) — the weakest-evidence change
-in this set; Redis restarting under load; Envoy WebSocket idle-timeout
-reconnection; and the rate limiter under genuinely concurrent load. Each
-document's "Verification" section says exactly where it stands.
+**A second pass then went hunting** ([0017](0017-bug-hunt.md)), closing the
+remaining gaps — the compensating delete under an induced Mongo failure, Redis
+restarting under load, and the rate limiter under genuine concurrency all now
+verified — and finding **fourteen further bugs**, three of them mine, including
+one that silently disabled all cross-instance real-time while the whole test
+suite stayed green.
+
+**Still not verified.** Envoy WebSocket idle-timeout reconnection, and the two
+issues left open in [0017](0017-bug-hunt.md): proxy behaviour during instance
+loss, and the absence of a per-user socket cap.
