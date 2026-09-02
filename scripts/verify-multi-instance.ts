@@ -110,23 +110,26 @@ try {
 
 // The limit must be global, not per instance: with three instances and a
 // per-process counter this would allow 3x the configured budget.
-const conversationForLimit = Number(process.env.RATE_LIMIT_CONVERSATION_ID ?? CONVERSATION_ID);
+// The sender must be a participant, or every request is rejected as 403 before
+// the limiter is consulted and the check proves nothing.
+const LIMIT = Number(process.env.RATE_LIMIT_MESSAGES ?? 5);
+await new Promise((r) => setTimeout(r, Number(process.env.RATE_LIMIT_WINDOW_MS ?? 10_000) + 1000));
+
 const codes: number[] = [];
-for (let i = 0; i < 9; i++) {
-  const res = await post(3 /* Carol — fresh budget */, {
-    conversationId: conversationForLimit,
-    body: `limit probe ${i}`,
-  });
+for (let i = 0; i < LIMIT * 2; i++) {
+  const res = await post(2, { conversationId: CONVERSATION_ID, body: `limit probe ` });
   codes.push(res.status);
 }
 const accepted = codes.filter((c) => c === 201).length;
 const forbidden = codes.filter((c) => c === 403).length;
+
 check(
-  'rate limit is shared across instances',
-  forbidden > 0 || accepted <= 5,
-  forbidden > 0
-    ? `caller is not a participant (${forbidden}x403) — budget untouched, which is the membership-before-budget rule`
-    : `${accepted} of 9 accepted (limit is 5 per window, per user, per conversation)`,
+  'rate limit budget is shared across instances',
+  forbidden === 0 && accepted === LIMIT,
+  forbidden
+    ? `sender is not a participant (x403) — inconclusive, pick a conversation they belong to`
+    : ` of  accepted; limit is , ` +
+      `a per-process counter across 3 instances would allow up to -e`,
 );
 
 bob.close();
