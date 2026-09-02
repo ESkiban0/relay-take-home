@@ -46,9 +46,17 @@ export async function startServer(config: Config = defaultConfig): Promise<Runni
     rateLimiter,
     config,
     async stop() {
-      // Stop accepting, drop sockets, then release the backing services.
-      await new Promise<void>((resolve) => server.close(() => resolve()));
+      // Order matters, and getting it wrong hangs forever.
+      //
+      // `server.close()` stops accepting new connections, but its callback does
+      // not fire until every *existing* connection has ended — and a WebSocket
+      // never ends on its own. Closing the server first therefore waits on
+      // sockets that nothing is going to close, until the orchestrator gives up
+      // and sends SIGKILL. Drop the sockets first, then the listener.
+      //
+      // Covered by scripts/verify-shutdown.ts, which fails if this is reversed.
       await hub.close();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
       await Promise.allSettled([broker.close(), rateLimiter.close(), store.close()]);
     },
   };

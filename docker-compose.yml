@@ -10,7 +10,10 @@ services:
     build:
       context: .
       dockerfile: docker/app/Dockerfile
-    command: npm start
+    # Exec form, and node directly rather than through npm: with `npm start`,
+    # PID 1 is npm, SIGTERM never reaches node, and the graceful shutdown in
+    # src/index.ts is dead code. Verified — the handler never logged.
+    command: ["node", "--import", "tsx", "src/index.ts"]
     restart: on-failure
     env_file: .env
     expose: ["3000"]
@@ -27,7 +30,7 @@ services:
     build:
       context: .
       dockerfile: docker/app/Dockerfile
-    command: npm run seed
+    command: ["node", "--import", "tsx", "docker/db/seed.ts"]
     restart: "no"
     env_file: .env
     volumes:
