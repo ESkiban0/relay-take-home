@@ -1,23 +1,34 @@
 import { MongoClient, type Db } from 'mongodb';
-import { config } from '../config.ts';
 
-const client = new MongoClient(config.mongoUrl);
-let db: Db | undefined;
+export interface MongoHandle {
+  client: MongoClient;
+  db: Db;
+}
 
-export async function connectMongo(retries = 20): Promise<Db> {
+export async function connectMongo(url: string, retries = 20, delayMs = 1500): Promise<MongoHandle> {
+  const client = new MongoClient(url);
+  let lastErr: unknown;
   for (let i = 0; i < retries; i++) {
     try {
       await client.connect();
-      db = client.db();
-      return db;
-    } catch {
-      await new Promise((r) => setTimeout(r, 1500));
+      return { client, db: client.db() };
+    } catch (err) {
+      lastErr = err;
+      await new Promise((r) => setTimeout(r, delayMs));
     }
   }
-  throw new Error('mongo not reachable');
+  throw new Error(`mongo not reachable: ${lastErr}`);
 }
 
-export function mongo(): Db {
-  if (!db) throw new Error('mongo not connected');
-  return db;
+/**
+ * Indexes the app depends on. `createIndex` is idempotent, so this is safe to
+ * run on every boot — including from several API instances at once.
+ *
+ * - the text index backs GET /api/search;
+ * - conversationId narrows a search to the caller's own conversations.
+ */
+export async function ensureMongoIndexes(db: Db): Promise<void> {
+  const bodies = db.collection('message_bodies');
+  await bodies.createIndex({ body: 'text' }, { name: 'body_text' });
+  await bodies.createIndex({ conversationId: 1, _id: -1 }, { name: 'conversation_recent' });
 }

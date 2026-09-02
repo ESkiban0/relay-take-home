@@ -1,9 +1,15 @@
-import mysql from 'mysql2/promise';
-import { config } from '../config.ts';
+import mysql, { type Pool } from 'mysql2/promise';
 
-export const pool = mysql.createPool(config.mysqlUrl);
+/**
+ * A pool per call rather than a module-level singleton: a singleton created at
+ * import time dials MySQL from every process that so much as imports a route,
+ * which is exactly what made the old code impossible to test in isolation.
+ */
+export function createPool(url: string): Pool {
+  return mysql.createPool(url);
+}
 
-export async function waitForMysql(retries = 40): Promise<void> {
+export async function waitForMysql(pool: Pool, retries = 40, delayMs = 1500): Promise<void> {
   let lastErr: unknown;
   for (let i = 0; i < retries; i++) {
     try {
@@ -11,7 +17,7 @@ export async function waitForMysql(retries = 40): Promise<void> {
       return;
     } catch (err) {
       lastErr = err;
-      await new Promise((r) => setTimeout(r, 1500));
+      await new Promise((r) => setTimeout(r, delayMs));
     }
   }
   throw new Error(`mysql not reachable: ${lastErr}`);

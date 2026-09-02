@@ -17,6 +17,8 @@ services:
     depends_on:
       seed:
         condition: service_completed_successfully
+      redis:
+        condition: service_healthy
     volumes:
       - ./:/app
       - /app/node_modules
@@ -35,7 +37,7 @@ services:
       mysql:
         condition: service_healthy
       mongo:
-        condition: service_started
+        condition: service_healthy
 
   mysql:
     image: mysql:8
@@ -55,7 +57,22 @@ services:
   mongo:
     image: mongo:7
     ports: ["27017:27017"]
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
 
   redis:
     image: redis:7
     expose: ["6379"]
+    # The API refuses to start its broker and rate limiter against a Redis that
+    # is not answering yet, so this gate is what makes `--scale api=3` boot
+    # cleanly rather than crash-looping the first two instances.
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 5s

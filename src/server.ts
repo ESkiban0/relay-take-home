@@ -1,0 +1,55 @@
+import http from 'node:http';
+import { createApp } from './app.ts';
+import { config as defaultConfig, type Config } from './config.ts';
+import { createBroker, type Broker } from './infra/broker.ts';
+import { createRateLimiter, type RateLimiter } from './infra/rate-limit.ts';
+import { createStore } from './store/index.ts';
+import type { Store } from './store/types.ts';
+import { Hub } from './ws/hub.ts';
+
+export interface RunningServer {
+  server: http.Server;
+  hub: Hub;
+  store: Store;
+  broker: Broker;
+  rateLimiter: RateLimiter;
+  config: Config;
+  stop(): Promise<void>;
+}
+
+/**
+ * Wires the object graph, starts listening, and hands back everything needed to
+ * shut it down again. Kept separate from `index.ts` so tests and the in-memory
+ * dev script can start a real server without inheriting signal handlers.
+ */
+export async function startServer(config: Config = defaultConfig): Promise<RunningServer> {
+  const store = await createStore(config);
+  const broker = createBroker(config);
+  const rateLimiter = createRateLimiter(config);
+
+  const app = createApp({ store, broker, rateLimiter, config });
+  const server = http.createServer(app);
+  const hub = new Hub(store, broker, config);
+  hub.attach(server);
+
+  await new Promise<void>((resolve) => server.listen(config.port, resolve));
+  console.log(
+    `relay listening on :${config.port} ` +
+      `[instance ${config.instanceId} store=${config.storeDriver} broker=${config.brokerDriver}]`,
+  );
+
+  return {
+    server,
+    hub,
+    store,
+    broker,
+    rateLimiter,
+    config,
+    async stop() {
+      // Stop accepting, drop sockets, then release the backing services.
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+      await hub.close();
+      await Promise.allSettled([broker.close(), rateLimiter.close(), store.close()]);
+    },
+  };
+}

@@ -1,26 +1,18 @@
-import http from 'node:http';
-import express from 'express';
 import { config } from './config.ts';
-import { waitForMysql } from './db/mysql.ts';
-import { connectMongo } from './db/mongo.ts';
-import { conversationsRouter } from './routes/conversations.js';
-import { messagesRouter } from './routes/messages.js';
-import { searchRouter } from './routes/search.js';
-import { attachWs } from './ws/hub.ts';
+import { startServer } from './server.ts';
 
-const app = express();
-app.use(express.json());
-app.use(express.static('web'));
-app.use('/api/conversations', conversationsRouter);
-app.use('/api/messages', messagesRouter);
-app.use('/api/search', searchRouter);
+const running = await startServer(config);
 
-const server = http.createServer(app);
-attachWs(server);
+let shuttingDown = false;
+async function shutdown(signal: string): Promise<void> {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`[shutdown] ${signal}`);
+  await running.stop();
+  process.exit(0);
+}
 
-await waitForMysql();
-await connectMongo();
-
-server.listen(config.port, () => {
-  console.log(`relay listening on :${config.port}`);
-});
+// Without these, `docker compose down` waits out the grace period on every
+// instance and Redis/MySQL connections are torn down mid-flight.
+process.on('SIGTERM', () => void shutdown('SIGTERM'));
+process.on('SIGINT', () => void shutdown('SIGINT'));
