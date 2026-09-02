@@ -2,7 +2,10 @@
   "name": "relay",
   "image": "mcr.microsoft.com/devcontainers/javascript-node:22",
   "features": {
-    "ghcr.io/devcontainers/features/docker-in-docker:2": {}
+    // moby:false selects upstream Docker CE. The default (moby) packages are
+    // not published for Debian trixie, which the node:22 image is now based on,
+    // and the feature install fails outright.
+    "ghcr.io/devcontainers/features/docker-in-docker:2": { "moby": false }
   },
   "postCreateCommand": "cp -n .env.example .env && npm install",
   "forwardPorts": [3000],
