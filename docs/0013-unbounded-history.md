@@ -133,8 +133,10 @@ default 5-per-10s would otherwise cap the seed data at five messages.
 Partly verified. Paging semantics, ordering, the cursor and its termination are
 covered against `MemoryStore`.
 
-**The SQL is unrun** — no Docker (see [0000](0000-overview.md)). The specific
-thing I would check on a live MySQL is `EXPLAIN` on the paged query showing a
-range scan on `idx_messages_conversation_recent` with no `Using filesort`, since
-that index is the entire reason the design is `O(page)` rather than
-`O(conversation)`.
+The SQL now runs against MySQL 8 — see [0016](0016-live-stack-verification.md).
+The paged query is fast at ~950k rows, but **not always via the index I expected**:
+the optimiser prefers a backward primary-key scan for conversations with recent
+activity, and selects `idx_messages_conversation_recent` for large archived ones,
+where it is 74x faster than without. Either way the cost is `O(page)`, which is
+what the design needed; the specific access path was my assumption, not a
+measurement, until I ran it.

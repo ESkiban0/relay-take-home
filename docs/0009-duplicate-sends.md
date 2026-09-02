@@ -144,9 +144,7 @@ implements the same `(conversationId, senderId, clientId)` rule, and confirmed
 by hand against the running app — the same `clientId` posted twice returned
 `201` then `200` with an identical id ([0015](0015-manual-verification.md)).
 
-**The MySQL side is unrun**: the `UNIQUE KEY`, and specifically the
-`ER_DUP_ENTRY` catch. Two things I would want to confirm on a live MySQL: that
-`NULL` client ids genuinely do not collide (they should — MySQL treats `NULL` as
-distinct in unique indexes, but it is worth seeing), and that the error `code` is
-`ER_DUP_ENTRY` as `mysql2` surfaces it. The in-memory store cannot exercise
-either, since it has no constraint to violate.
+Now also verified against MySQL 8 ([0016](0016-live-stack-verification.md)): the
+`UNIQUE KEY` fires, the `ER_DUP_ENTRY` catch recovers the original row (`201`
+then `200`, same id), and `NULL` client ids do not collide — ~950k rows were
+inserted with `client_id NULL` under the constraint without a violation.

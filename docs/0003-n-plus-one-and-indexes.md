@@ -105,10 +105,16 @@ KEY idx_messages_conversation_recent (conversation_id, id DESC)  -- on messages
 KEY idx_participants_user (user_id)                              -- on conversation_participants
 ```
 
-The first is the one that matters. It serves the aggregate, and it serves the
-message-history read ([0013](0013-unbounded-history.md)), which wants exactly
-"newest N rows of one conversation" — with `(conversation_id, id DESC)` that is
-an index range scan with no sort.
+The first is intended to serve the aggregate and the message-history read
+([0013](0013-unbounded-history.md)), which wants exactly "newest N rows of one
+conversation" — with `(conversation_id, id DESC)` that is an index scan with no
+sort.
+
+> **Measured later, and only partly true.** Running this against MySQL 8 showed
+> the optimiser prefers a backward primary-key scan for conversations with
+> recent traffic, and only selects this index for large low-activity ones —
+> where it is 74x faster. The reasoning above is the case it was built for, not
+> the case it is used in most often. See [0016](0016-live-stack-verification.md).
 
 I also added foreign keys and a unique constraint on `users.email`. Neither is a
 performance fix; both are the kind of thing that is nearly free to add now and
@@ -141,12 +147,16 @@ a real MySQL — see Verification.
 
 ## Verification
 
-Partly verified. The behaviour — counts, last message, ordering, scoping — is
-covered by the suite through `MemoryStore`.
+Verified against MySQL 8 — see [0016](0016-live-stack-verification.md). The
+rewritten inbox query runs, ordering by activity is correct, `lastMessage.body`
+is populated, and `EXPLAIN` confirms the join uses `idx_participants_user` as a
+**covering** index (`type: ref`, `Extra: Using index`).
 
-The SQL itself, and every index in this document, **has not run**. No Docker
-(see [0000](0000-overview.md)), so the `GROUP BY`/`LEFT JOIN` has not been
-executed and no `EXPLAIN` has confirmed the indexes are chosen. Given a working
-MySQL the first things I would check are `EXPLAIN` on the inbox query showing
-`idx_participants_user` on the join and no `Using filesort`, and `EXPLAIN` on
-the history read showing `idx_messages_conversation_recent` as a range scan.
+**One claim in this document was wrong and is corrected there.** I wrote that
+the history read would always be a range scan on
+`idx_messages_conversation_recent` with no filesort. Measured on ~950k rows, the
+optimiser picks the primary key with a backward scan for conversations with
+recent traffic — correctly, since it finds 50 matching rows almost immediately.
+It selects my index for large *low-activity* conversations, where it is **74x
+faster** (1.0 ms vs 74.5 ms) and sorts nothing. The index earns its place, but
+in one specific case rather than universally.

@@ -128,7 +128,11 @@ confirmed the endpoint by hand against the running app: `?q=refund` returned the
 matching message with its conversation title for a participant, and `[]` for a
 user outside that conversation ([0015](0015-manual-verification.md)).
 
-The Mongo side — `$text`, the text index, `textScore` ranking — **has not run**;
-no Docker (see [0000](0000-overview.md)). The specific thing I would check first
-on a live Mongo is that stemming behaves as claimed (`refund` ↔ `refunds`) and
-that `explain()` shows the text index being used rather than a collection scan.
+The Mongo side now runs too ([0016](0016-live-stack-verification.md)): the text
+index is created on boot, and stemming behaves as claimed — querying `refund`
+matches the stored text "Your **refunds** have been issued", which was the
+specific thing I flagged as needing a live check. Scoping holds through the real
+`$text` query, with a non-participant getting `[]`.
+
+Still unchecked: `explain()` confirming the text index is used rather than a
+collection scan at volume, and the quality of `textScore` ranking.

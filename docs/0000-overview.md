@@ -26,6 +26,7 @@ fixes with features. The grouping below is the useful way to read it.
 | [0013](0013-unbounded-history.md) | `GET /api/messages` returned the whole conversation | Bug |
 | [0014](0014-cross-store-consistency.md) | A failed Mongo write left a permanently empty message | Bug |
 | [0015](0015-manual-verification.md) | What I checked by hand in a browser, and what it found | Record |
+| [0016](0016-live-stack-verification.md) | The live Docker stack: MySQL, Mongo, Redis, `--scale api=3` | Record |
 
 ## The short version
 
@@ -78,10 +79,11 @@ npm run typecheck
 
 ## Verification status — read this
 
-I did not have Docker available on the machine I worked on: it is a Hyper-V
-guest without nested virtualisation, so Docker Desktop, WSL2 and a local Docker
-Engine are all unavailable. That is a real limitation of this submission and I
-would rather state it than let it be discovered.
+I could not run Docker on the machine I started on — a Hyper-V guest without
+nested virtualisation, so Docker Desktop, WSL2 and a local Docker Engine were
+all unavailable. Most of this work was therefore done and tested without it. I
+later ran the full stack in a GitHub Codespace; what that changed is at the end
+of this section.
 
 **Verified — automated.** The 64-case suite in `test/` runs the real Express app
 and the real WebSocket hub over loopback HTTP and real sockets, against the
@@ -100,10 +102,18 @@ reconnect and catch up. That session is logged in
 [0015](0015-manual-verification.md) — it found one bug the test suite could not
 see (the inbox stopped re-sorting live), which is now fixed.
 
-**Not verified against live infrastructure.** The `SqlMongoStore`, `RedisBroker`
-and `RedisRateLimiter` implementations, the new MySQL DDL (indexes, the unique
-key on `client_id`, the foreign keys), the Mongo text index, and the Envoy
-scale-out itself. They are written to the same contract the in-memory
-implementations are tested against, and the contract is stated in each document,
-but the SQL and Lua have not executed. Each document's "Verification" section
-says exactly which side of this line it falls on.
+**Verified — against the live stack.** I later got Docker working in a GitHub
+Codespace and ran the real `docker compose` stack: MySQL 8, MongoDB 7, Redis 7,
+Envoy, and `--scale api=3`. That closes the gap above — the SQL, the DDL and its
+indexes, the Mongo text index, the Redis Lua script and the three-instance
+topology have all now executed. See
+[0016](0016-live-stack-verification.md), which also records **a claim of mine
+that turned out to be wrong** (which index the optimiser actually picks for
+paged history) and **a check that passed for the wrong reason** until I looked
+at it.
+
+**Still not verified.** An induced Mongo failure to exercise the compensating
+delete in [0014](0014-cross-store-consistency.md) — the weakest-evidence change
+in this set; Redis restarting under load; Envoy WebSocket idle-timeout
+reconnection; and the rate limiter under genuinely concurrent load. Each
+document's "Verification" section says exactly where it stands.

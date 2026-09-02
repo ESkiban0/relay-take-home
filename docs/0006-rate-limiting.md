@@ -150,11 +150,17 @@ against the running app by hand — five sends admitted, then `429` with
 conversation ([0015](0015-manual-verification.md)). But all of that is
 `MemoryRateLimiter`.
 
-**`RedisRateLimiter` and the Lua script have not executed.** No Docker (see
-[0000](0000-overview.md)). The in-memory implementation is a faithful transcription
-of the same algorithm and the tests pin the behaviour both must exhibit, but the
-Lua itself is unrun, and Lua's `ZRANGE ... WITHSCORES` return shape is exactly
-the sort of thing that is right in reasoning and wrong in practice. On a live
-Redis I would run the same suite against `RedisRateLimiter`, and then the case
-that in-memory cannot express: concurrent sends from several instances against
-one key, asserting the total allowed is `limit` and not `limit × instances`.
+**The Lua script now runs against Redis 7** — see
+[0016](0016-live-stack-verification.md). I had flagged Lua's
+`ZRANGE ... WITHSCORES` return shape as the thing most likely to be right in
+reasoning and wrong in practice; it is correct. Five sends admitted, then `429`
+with `Retry-After: 10`, and the keys present in Redis (`ratelimit:msg:1:1`,
+`ratelimit:msg:2:1`) confirm the per-user-per-conversation scoping.
+
+The case the in-memory limiter could never express is verified too: across
+**three API instances behind Envoy**, exactly 5 of 10 sends were accepted, where
+a per-process counter would have allowed 15.
+
+Still unverified: behaviour under genuinely concurrent load. Every probe was
+sequential, so the atomicity argument for using a script at all remains reasoned
+rather than measured.

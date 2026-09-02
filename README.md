@@ -61,20 +61,38 @@ N+1 fix a single method.
 
 ## Honest status
 
-I had no Docker on the machine I worked on (a Hyper-V guest with no nested
-virtualisation), so **the MySQL DDL, the Mongo text index, the Redis Lua script
-and the Envoy scale-out have not been executed.** They are written to the
-contract the in-memory implementations are tested against, but they are unrun.
+Verified three ways, in increasing order of fidelity:
 
-What *is* verified: 64 automated tests against the real Express app and real
-WebSockets, plus a hands-on browser session covering two users, live messages,
-the unread dot, the typing indicator, `429`s, search scoping, the XSS payload
-and a server kill/restart to watch the client reconnect and catch up — logged in
-[0015](docs/0015-manual-verification.md). That session found a bug the suite
-could not see.
+1. **64 automated tests** against the real Express app and real WebSockets,
+   including two full app instances over a shared broker; plus the frontend
+   rendered in jsdom.
+2. **A hands-on browser session** ([0015](docs/0015-manual-verification.md)) —
+   two users, live messages, unread dot, typing indicator, `429`s, search
+   scoping, the XSS payload, and a server kill/restart to watch the client
+   reconnect and catch up.
+3. **The real Docker stack** ([0016](docs/0016-live-stack-verification.md)) —
+   MySQL 8, MongoDB 7, Redis 7, Envoy, and `docker compose up -d --scale api=3`.
+   The DDL and its indexes, the `ER_DUP_ENTRY` path, the Mongo text index, the
+   Redis Lua script and three-instance real-time all executed.
 
-Each document's "Verification" section says exactly which side of that line it
-falls on.
+Two findings from doing this rather than reasoning about it, both written up:
+
+- **A claim of mine was wrong.** I documented that the paged history read would
+  use `idx_messages_conversation_recent`. Measured on ~950k rows, the optimiser
+  prefers a backward primary-key scan for active conversations and only picks my
+  index for large archived ones — where it *is* worth it, at 74× (1.0 ms vs
+  74.5 ms). Corrected in [0003](docs/0003-n-plus-one-and-indexes.md) and
+  [0016](docs/0016-live-stack-verification.md).
+- **A check passed for the wrong reason.** The multi-instance rate-limit
+  assertion probed as a non-participant, so every request was rejected `403`
+  before the limiter ran — and it reported green. Fixed; the real run gives 5 of
+  10 accepted across three instances, where a per-process counter would allow 15.
+
+**Still unverified**, and stated as such in the relevant documents: an induced
+Mongo failure to exercise the compensating delete in
+[0014](docs/0014-cross-store-consistency.md) — the weakest-evidence change here;
+Redis restarting under load; Envoy WebSocket idle-timeout reconnection; and the
+rate limiter under genuinely concurrent load.
 
 ---
 

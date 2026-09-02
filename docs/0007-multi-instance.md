@@ -139,21 +139,27 @@ distinction carefully.
 WebSocket hubs, sharing a broker, deliver correctly and exactly once. That is
 the property the task is about, and it is genuinely exercised.
 
-**Not verified:** `RedisBroker` itself, and `--scale api=3` under Envoy. No
-Docker (see [0000](0000-overview.md)). The tests use `MemoryBroker` as the
-shared broker, so what is proven is "the app works when the broker fans out
-correctly", not "Redis pub/sub fans out correctly" — the latter is a
-well-established property of Redis, but my *wiring* of it is unrun.
+**Also verified against the real thing** — see
+[0016](0016-live-stack-verification.md). `docker compose up -d --scale api=3`,
+three API containers behind Envoy, real Redis pub/sub, driven by
+`scripts/verify-multi-instance.ts`:
 
-Given Docker, this is what I would run:
-
-```bash
-docker compose up -d --scale api=3
-curl -s localhost:3000/healthz   # repeat; instanceId should vary
+```
+PASS  proxy spreads HTTP across instances
+      3 distinct instanceId(s) over 12 requests
+PASS  message posted to one instance reaches a socket on another
+PASS  typing signal crosses instances
+PASS  rate limit budget is shared across instances
+      5 of 10 accepted; a per-process counter would allow 15
 ```
 
-then two browser tabs as different users (`/?userId=1`, `/?userId=2`), confirm
-each is on a different instance via the logs, and check that a message sent in
-one appears live in the other along with the unread dot and the typing
-indicator. Then `docker compose restart redis` to watch reconnection behaviour,
-which is the part I would least trust without seeing it.
+So `RedisBroker` and the wiring are no longer taken on trust.
+
+Worth recording: the rate-limit check **initially passed for the wrong reason**
+— it probed as a non-participant, so every request was rejected `403` before the
+limiter was consulted. A green check that tests nothing is worse than a missing
+one; it is fixed and the corrected run is the one quoted above.
+
+Still unverified: `docker compose restart redis` — how a live subscription
+recovers when the broker restarts under load. That is the part I would least
+trust without seeing it, and I have not seen it.
