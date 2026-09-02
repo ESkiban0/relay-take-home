@@ -10,6 +10,10 @@
  * gives up and sends SIGKILL.
  *
  * Runs entirely on the in-memory drivers, so it needs no MySQL/Mongo/Redis.
+ *
+ * POSIX only. On Windows there are no real signals — child.kill('SIGTERM')
+ * calls TerminateProcess, so the handler can never run and this probe reports a
+ * failure that says nothing about the code.
  */
 export {};
 
@@ -18,6 +22,11 @@ import { WebSocket } from 'ws';
 
 const PORT = Number(process.env.PORT ?? 3999);
 const GRACE_MS = Number(process.env.GRACE_MS ?? 15_000);
+
+if (process.platform === 'win32') {
+  console.log('SKIP  no real signals on Windows; run this on Linux (or in Docker).');
+  process.exit(0);
+}
 
 const child = spawn(process.execPath, ['--import', 'tsx', 'src/index.ts'], {
   env: {
@@ -31,8 +40,17 @@ const child = spawn(process.execPath, ['--import', 'tsx', 'src/index.ts'], {
 });
 
 const out: string[] = [];
-child.stdout.on('data', (d) => out.push(String(d)));
-child.stderr.on('data', (d) => out.push(String(d)));
+// Streamed, not buffered: a process that exits milliseconds after SIGTERM can
+// otherwise lose its final lines to the pipe, which makes a hard kill look
+// indistinguishable from a clean shutdown.
+child.stdout.on('data', (d) => {
+  out.push(String(d));
+  process.stdout.write(`  child> ${String(d)}`);
+});
+child.stderr.on('data', (d) => {
+  out.push(String(d));
+  process.stdout.write(`  child! ${String(d)}`);
+});
 
 async function waitForListening(): Promise<void> {
   for (let i = 0; i < 100; i++) {
@@ -57,29 +75,48 @@ await new Promise<void>((resolve, reject) => {
 });
 console.log('websocket attached — this is the connection that blocks server.close()');
 
-const exited = new Promise<{ ms: number; timedOut: boolean }>((resolve) => {
+interface Exit {
+  ms: number;
+  timedOut: boolean;
+  code: number | null;
+  signal: NodeJS.Signals | null;
+}
+
+const exited = new Promise<Exit>((resolve) => {
   const started = Date.now();
   const timer = setTimeout(() => {
-    resolve({ ms: Date.now() - started, timedOut: true });
+    resolve({ ms: Date.now() - started, timedOut: true, code: null, signal: null });
     child.kill('SIGKILL');
   }, GRACE_MS);
-  child.once('exit', () => {
+  child.once('exit', (code, signal) => {
     clearTimeout(timer);
-    resolve({ ms: Date.now() - started, timedOut: false });
+    resolve({ ms: Date.now() - started, timedOut: false, code, signal });
   });
 });
 
 console.log('sending SIGTERM…');
 child.kill('SIGTERM');
 
-const { ms, timedOut } = await exited;
-console.log(out.join('').trim());
+const { ms, timedOut, code, signal } = await exited;
+// Give the pipes a moment so the child's last lines are not lost.
+await new Promise((r) => setTimeout(r, 200));
 
 if (timedOut) {
   console.log(`\nFAIL  still running ${ms}ms after SIGTERM — had to SIGKILL it.`);
   console.log('      An orchestrator would wait out its grace period on every deploy.');
   process.exit(1);
 }
-console.log(`\nPASS  exited cleanly ${ms}ms after SIGTERM, with a socket still attached.`);
+
+// Exiting fast is not the same as exiting gracefully. If the handler ran, it
+// logged; if the kernel's default SIGTERM disposition ran instead, it did not.
+const ranHandler = out.join('').includes('[shutdown]');
+console.log(
+  `\nexited after ${ms}ms — code=${code} signal=${signal} handlerLogged=${ranHandler}`,
+);
+if (!ranHandler) {
+  console.log('FAIL  the process died without running the shutdown handler.');
+  process.exit(1);
+}
+console.log('PASS  shutdown handler ran and the process exited, socket still attached.');
 ws.close();
 process.exit(0);
